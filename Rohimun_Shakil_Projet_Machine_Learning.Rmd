@@ -1,0 +1,427 @@
+---
+title: "Projet du cours « Introduction au machine learning »"
+author: "ROHIMUN SHAKIL"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Utilisation des packages :
+
+```{r message=FALSE, warning=FALSE}
+library(MASS)
+library(e1071)     # Pour Naive Bayes
+library(dplyr)    # Pour les variables aléatoire 
+library(ggplot2) # Meilleur rendu visuel pour les graphiques
+```
+
+# Etude de simulation
+
+
+Vous simulerez deux gaussiennes en dimension 2 de matrice de variance $\sigma^2I$, et de vecteurs moyennes respectifs $\mu^T_1 = (0,0)$ et $\mu^T_2 = (\epsilon,\epsilon)$.
+
+1) Evaluer empiriquement l’erreur de classification commise par la méthode un classifieur de Bayes naif en fonction de ϵ lorsque les deux classes sont de proportion identique et que le nombre d’observations total est n = 200.
+
+
+Avant de répondre à la question, pour avoir une meilleur idée de ce que représente ces classes, je décide de les représenter selon des paramètres précis.
+
+```{r}
+sigma <- 2
+epsilon <- 1
+
+mu1 <- c(0, 0)
+mu2 <- c(epsilon, epsilon)
+
+matrice_covariance <- diag(sigma^2, 2)
+
+classe1 <- mvrnorm(n = 100, mu = mu1, Sigma = matrice_covariance)
+classe2 <- mvrnorm(n = 100, mu = mu2, Sigma = matrice_covariance)
+
+plot(classe1, col = "blue", pch = 19, xlab = "X1", ylab = "X2", main = "Simulation de deux gaussiennes en dimension 2")
+points(classe2, col = "red", pch = 19)
+legend("topright", legend = c("Classe 1", "Classe 2"), col = c("blue", "red"), pch = 19)
+```
+
+Après avoir eu un visuel de ce que représente les classes, on répond à la question avec une fonction de paramètre epsilon pour obtenir mes deux classes. On choisit $\sigma^2 = 3$.
+```{r}
+n = 200
+
+simulation_gaussienne <- function(epsilon) {
+  matrice_covariance <- 3 * diag(2)
+  mu1 <- c(0, 0)
+  mu2 <- c(epsilon, epsilon)
+  
+  classe1 <- mvrnorm(n = n/2, mu = mu1, Sigma = matrice_covariance)
+  classe2 <- mvrnorm(n = n/2, mu = mu2, Sigma = matrice_covariance)
+
+  return(list(classe_1 = classe1, classe_2 = classe2))
+}
+```
+
+On crée un vecteur d'epsilon allant de 1 à 10 pour évaluer l'erreur et une liste vide qui représentera la liste des erreurs en fonction de epsilon. On utilise la fonction "set.seed(123)" pour la reproductibilité des résultats car les variables d'entraînements et de tests sont choisit de manière aléatoire.
+
+```{r}
+valeur_epsilon <- seq(1, 10, by = 1)
+resultats_liste <- list()
+
+for (epsilon in valeur_epsilon) {
+  data <- simulation_gaussienne(epsilon)
+  all_data <- rbind(data$classe_1, data$classe_2)
+  labels <- rep(c("classe 1", "classe 2"), each = 100)
+  dataset <- data.frame(X1 = all_data[, 1], X2 = all_data[, 2], Class = labels)
+  
+  set.seed(123)
+  
+  training.versus.testing <- rbinom(100, 1, 1/2)
+  training.versus.testing <- as.factor(training.versus.testing)
+  levels(training.versus.testing) <- c("test", "train")
+  Z <- data.frame(dataset, training.versus.testing)
+  Z.split <- split(Z, training.versus.testing)
+  Z.train <- Z.split$train
+  Z.test <- Z.split$test
+  
+  naive_bayes_classifier <- naiveBayes(Class ~ X1 + X2, data = Z.train)
+  predictions <- predict(naive_bayes_classifier, newdata = Z.test)
+  prediction_classe <- as.factor(predictions)
+  erreur_test <- mean(prediction_classe != Z.test$Class)
+  resultats_liste[[as.character(epsilon)]] <- list(data = data, erreur_test = erreur_test)
+}
+for (result in resultats_liste) {
+  print(result$erreur_test)
+}
+
+resultats_dataframe <- data.frame(epsilon = as.numeric(names(resultats_liste)), 
+                                   erreur_test = sapply(resultats_liste, function(x) x$erreur_test))
+```
+
+On constate qu'à partir de  $\epsilon = 8$  l'erreur de prédiction est nulle ou suffisamment petite pour la considérer comme nulle.
+
+On trace la courbe d'erreur en fonction d'epsilon.
+
+```{r}
+ggplot(resultats_dataframe, aes(x = epsilon, y = erreur_test*100)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Taux d'erreur en fonction de l'epsilon",
+       x = "Valeur d'epsilon",
+       y = "Taux d'erreur en pourcentage") +
+  theme_minimal()
+```
+
+Ce résultat est logique car plus le vecteur moyen de la classe 2 s'éloigne de la classe 1 plus il est facile de distingué les deux classes pour l'algorithme. 
+ 
+ 
+2) Evaluer théoriquement l’erreur de classification d’un classifieur de Bayes (lois théoriques connues) en fonction de $\epsilon$.
+
+a) Montrer que la fonction de décision prend la forme : 
+
+$$
+\hat{f}(x) = \left\{
+    \begin{array}{ll}
+        1 & \mbox{si } A = (\mu_1 - \mu_2)^t \Sigma^{-1}(x-\frac{1}{2}(\mu_1 - \mu_2)) > \log \frac{\pi_1}{\pi_2}, \\
+        2 & \mbox{sinon.}
+    \end{array}
+\right.
+$$
+La densité de probabilité conditionnelle pour une distribution gaussienne multivariée est donnée par :
+
+$$
+\forall i \in \{1,2\}  \quad
+P\left(X \mid C_i\right) = \frac{1}{(2 \pi)^{d / 2}\left|\Sigma_i\right|^{1 / 2}} \exp \left(-\frac{1}{2}\left(X-\mu_i\right)^T \Sigma_i^{-1}\left(X-\mu_i\right)\right)
+$$
+Avec : - $X$ est le vecteur aléatoire représentant les caractéristiques du point à classifier
+       - $\mu_i$ est le vecteur moyen de la classe $C_i$  
+       - $\Sigma_i$ est la matrice de covariance de la classe $C_i$
+       - $d$ est la dimension de $X$.
+
+On prend le logarithme des densité conditionnelles, ce qui donne : 
+
+$$
+\forall i \in \{1,2\}  \quad
+\log P\left(X \mid C_i\right) = -\frac{d}{2}\log(2\pi) -\frac{1}{2} \log \left|\Sigma_i\right| - \frac{1}{2}\left(X-\mu_i\right)^T \Sigma_i^{-1}\left(X-\mu_i\right)
+$$
+
+On obtient A avec la soustraction des logarithmes des deux classes : 
+
+$$
+A = \log(\pi_2 P\left(X \mid C_2\right)) - \log (\pi_1 P\left(X \mid C_1\right))
+$$
+Avec $\pi_i$ les probabilités a priori des classes $C_i$
+
+Comme les deux gaussiennes ont la même matrice de variance covariance, on obtient : 
+
+$$
+A = (\mu_1 - \mu_2)^t \Sigma^{-1}(x-\frac{1}{2}(\mu_1 - \mu_2)) - \log \frac{\pi_1}{\pi_2}
+$$
+On définit donc la fonction de décision avec : 
+
+$$
+\hat{f}(x) = \left\{
+    \begin{array}{ll}
+        1 & \mbox{si } A > 0, \\
+        2 & \mbox{sinon.}
+    \end{array}
+\right.
+$$
+
+D'où le résultat souhaité.
+
+b) Si $X$ appartient à la classe 1, montrer que :
+
+$$ 
+A \sim \mathcal{N}(\frac{1}{2}\delta^2,\delta^2)
+$$
+et donner la forme de $\delta$.
+
+# Présentation des données
+
+## Vos données
+
+Installer le package mlbench
+
+Vous considérerez le jeu de données Ozone: library(mlbench); data(Ozone).
+
+```{r}
+library(mlbench)
+data(Ozone)
+```
+
+Présentez le jeu de données et le décrire brièvement en utilisant des techniques de
+statistiques descriptives univariées et bivariées (histogrammes, boxplot, pair plot. . . ).
+
+```{r}
+summary(Ozone)
+```
+
+
+## Présentation du jeu de données : Ozone.
+
+Il s'agit d'un jeu de données avec 13 composantes :
+
+  - V1 : Un nombre allant de 1 à 12 correspondant au mois où la donnée à été prélevé. (Variable qualitative)
+  
+  - V2 : Un nombre allant de 1 à 31 correspondant au date où la donnée à été prélevé. (Variable qualitative)
+  
+  - V3 : Un nombre allant de 1 à 7 correspondant au jour où la donnée à été prélevé. (Variable qualitative)
+  
+  - V4 : La concentration maximale quotidienne d'ozone mesurée en moyenne sur une heure. (Variable quantitative)
+  
+  - V5 : La hauteur de la pression atmosphérique à 500 millibars mesurée à la base aérienne de Vandenberg en mètre. (Variable quantitative)
+  
+  - V6 : La vitesse du vent mesurée à l'aéroport de Los Angeles en mille par heure. (Variable quantitative)
+  
+  - V7 : Le pourcentage d'humidité mesuré à l'aéroport de Los Angeles. (Variable quantitative)
+  
+  - V8 : La température mesurée à Sandburg, en Californie en degré Fahrenheit. (Variable quantitative)
+  
+  - V9 : La température mesurée à El Monte, en Californie en degré Fahrenheit. (Variable quantitative)
+  
+  - V10 : La hauteur de la base d'inversion mesurée à l'aéroport de Los Angeles en pieds. (Variable quantitative)
+  
+  - V11 : Le gradient de pression entre LAX et Daggett, en Californie en millimètres de mercure. (Variable quantitative)
+  
+  - V12 : La température à la base d'inversion mesurée à l'aéroport de Los Angeles en degré Fahrenheit. (Variable quantitative)
+  
+  - V13 : La visibilité mesurée à l'aéroport de Los Angeles en miles. (Variable quantitative)
+ 
+Remarque 1 : La hauteur de la base d'inversion représente la distance verticale entre la surface terrestre et le point où une inversion thermique commence dans l'atmosphère. Une inversion thermique est un phénomène où la température de l'air augmente avec l'altitude au lieu de diminuer normalement. Cette mesure est importante pour évaluer la qualité de l'air, car une base d'inversion basse peut piéger les polluants près du sol, impactant ainsi la qualité de l'air dans une région.
+
+Remarque 2 : Le gradient de pression mesure la variation de la pression atmosphérique sur une distance horizontale donnée. Calculé comme la différence de pression divisée par la distance, il indique à quelle vitesse la pression change dans l'atmosphère sur l'horizontalité. Un gradient élevé signifie une variation rapide de la pression sur une courte distance, tandis qu'un gradient bas indique une variation plus graduelle. En météorologie, un fort gradient de pression est associé à des conditions dynamiques, influençant les vents et les modèles météorologiques régionaux.
+
+On constate que nous avons 3 variables qualitatives et 10 variables quantitatives.
+
+Le but est de prédire la variable V4 (La concentration maximale quotidienne d'ozone mesurée en moyenne sur une heure), par rapport aux 9 autres variables quantitatives.
+
+Dans un premier temps essayons de "nettoyé" la base de donnée, le but étant de retirer les lignes (ie les données prise une certaine date) qui ont peu d'observation.
+
+On définit un seuil pour laquelle si la ligne contient plus de valeurs manquantes que la valeur du seuil donnée on retire la ligne. On regarde le nombre de valeur manquante par lignes en fonction du seuil.
+
+```{r}
+seuil <- 1
+valeur_NA <- rowSums(is.na(Ozone))
+indices_a_supprime <- which(valeur_NA > seuil)
+length(indices_a_supprime)
+```
+
+On remarque si on met le seuil à 0, on a 163 lignes à supprimer ce qui risque de biaisé notre jeu de donnée, en revanche lorsque le seuil est égale à 1, on doit supprimer uniquement 21 lignes ce qui me paraît assez petit pour ne pas biaisé mon jeu de donnée. Donc je supprime ces 21 lignes.
+
+```{r}
+indices_a_garder <- which(valeur_NA <= seuil)
+Ozone_1 <- Ozone[indices_a_garder, ]
+nrow(Ozone_1)
+```
+
+La base de donnée Ozone ayant 366 lignes pour les 366 jours de l'année, on a bien supprimé les 2 lignes que l'on souhaitait.
+
+Maintenant pour éviter des problème future, notamment pour l'utilisation du K-means, on va remplacer les valeurs manquantes (NA) par la moyenne des valeurs de sa colonnes (ie la moyenne des valeurs observées). Les colonnes V1, V2, V3 ne peuvent pas avoir de valeurs manquantes car il s'agit des dates d'observation.
+
+```{r}
+for (i in 4:13) {
+  if (any(is.na(Ozone_1[,i]))) {
+  moyenne <- mean(as.numeric(Ozone_1[,i]), na.rm = TRUE)
+  Ozone_1[,i] <- replace(Ozone_1[,i], is.na(Ozone_1[,i]), moyenne)
+}
+}
+```
+
+Vérifions qu'il ne reste aucune valeurs NA.
+
+```{r}
+n = 0
+for (i in 1:13) {
+  if (any(is.na(Ozone_1[,i]))) {
+  n <- n + 1
+}
+}
+n
+```
+
+Passons à la description du jeu de donnée :
+
+```{r}
+ggplot(Ozone_1, aes(x = V4)) +
+  geom_histogram(binwidth = 1, fill = "skyblue", color = "black", alpha = 1) +
+  labs(title = "Histogramme de la concentration en Ozone",
+       x = "Concentration en Ozone",
+       y = "Fréquence")
+```
+
+```{r}
+ggplot(Ozone_1, aes(x = factor(V1), y = V4)) +
+  geom_boxplot(fill = "skyblue", color = "black", alpha = 1) +
+  labs(title = "Boxplot de la concentration en Ozone par mois",
+       x = "Mois",
+       y = "Concentration en Ozone")
+```
+
+```{r}
+ggplot(Ozone, aes(x = V4, y = V8)) +
+  geom_point() +
+  labs(title = "Diagramme de dispersion entre V4 et V8", x = "Concentration d'Ozone", y = "Température à Sandburg (en degré F)")
+```
+
+On peut aussi regarder si les variables sont liées. Pour cela on regarde la corrélation entre les variables quantitatives.
+
+```{r}
+pairs(Ozone_1[, 4:13], main = "Pair Plot du jeu de données Ozone")
+```
+
+Enfin on peut aussi aussi les corrélations entre les varaibles grâce au packages "corrplot"
+
+```{r}
+library(corrplot)
+matrice_corr <- cor(Ozone_1[,4:13], use = "complete.obs")
+corrplot(matrice_corr, method = "color", type = "upper", addCoef.col = "black")
+```
+
+Ce qui nous permet de distingué une forte corrélation entre les variables V5, V8, V9 et V12 par rapport à V4 qui est la variable que l'on cherche à estimé.
+
+# Exploration non supervisée avec l’algorithme des k-means
+
+Utiliser l’algorithme des k-means pour continuer votre analyse exploratoire. Attention
+de sélectionner et ou transformer vos variables avant d’appliquer la méthode. Vous
+pourrez suivant les cas utiliser la technique sur les individus ou les variables.
+
+Commenter
+
+Dans un premier temps, on normalise (ie centre et réduit) notre jeu de donnée pour éviter que la méthode des K-means soit biaisé car une valeur est beaucoup trop éloigner des autres.
+
+```{r}
+K_means_data <- scale(Ozone_1[,4:13])
+```
+
+Le but maintenant est de déterminer le nombre optimal de "Clusters" pour utiliser notre K-means, on va procéder par la méthode du coude.
+
+```{r}
+vecteur_nul <- numeric(10)
+
+for (i in 1:10) {
+  kmeans_n <- kmeans(K_means_data, centers = i)
+  vecteur_nul[i] <- sum(kmeans_n$withinss)
+}
+
+ggplot() +
+  geom_line(aes(x = 1:10, y = vecteur_nul), linewidth = 1) + 
+  geom_point(aes(x = 1:10, y = vecteur_nul), color = "red", size = 3, shape = 1) +
+  labs(title = "Somme des carrés intra-cluster en fonction du nombre de clusters (k)",
+       x = "Nombre de clusters (k)",
+       y = "Somme des carrés intra-cluster") +
+  scale_x_continuous(breaks = 1:10)
+```
+
+On remarque que d'après la méthode du coude $k = 4$ est un bon choix. Donc on applique la méthode des 4-means pour.
+
+```{r}
+k <- 4
+kmeans_n <- kmeans(K_means_data, centers = k)
+
+print(kmeans_n)
+```
+
+```{r}
+plot(K_means_data[, 1], K_means_data[, 4], col = kmeans_n$cluster, pch = 16, main = "Graphique de Clustering 4-means" ,xlab = "Concentration d'Ozone", ylab = "Humidité à LAX en pourcentage")
+points(kmeans_n$centers[, 1], kmeans_n$centers[, 2], col = 1:k, pch = 4, cex = 3)
+```
+
+```{r}
+plot(K_means_data[, 1], K_means_data[, 5], col = kmeans_n$cluster, pch = 16, main = "Graphique de Clustering 4-means" ,xlab = "Concentration d'Ozone", ylab = "Température à Sandburg (en degré F)")
+points(kmeans_n$centers[, 1], kmeans_n$centers[, 2], col = 1:k, pch = 4, cex = 3)
+```
+
+On remarque que quatre groupes représente nos données, on peux donc prédire la concentration en Ozone d'un future points en fonction de son appartenance aux groupes.
+
+# Prédiction avec un classifieur de Bayes naif
+
+Utiliser un classifieur de Bayes naif pour prédire **Daily maximum one-hour-average
+ozone reading** à partir de certaines autres variables du jeu de données. Vous donnerez
+une estimation de l’erreur de prédiction.
+
+```{r}
+library(e1071)
+```
+
+Dans un premier temps, on sépare notre jeu de donnée entre ce que l'on doit prédire et les variables qui vont nous aider dans la prédiction. On prend que des variables quantitatives pour prédire.
+
+```{r}
+predicteurs <- Ozone_1[,5:13]
+variable_a_predire <- Ozone_1[,4]
+matrice_vap <- as.matrix(as.numeric(variable_a_predire))
+```
+
+On divise notre jeu de donnée de prédicteurs en deux pour avoir une partie qui entraîne l'algorithme (50%) et l'autre pour le testé (50%). On utilise la fonction "set.seed(123)" pour reproduire les résultats car le choix de la divisions des données est aléatoire.
+
+```{r}
+set.seed(123)
+indices <- sample(1:nrow(Ozone_1), 0.5 * nrow(Ozone_1))
+train_data <- Ozone_1[indices, ]
+test_data <- Ozone_1[-indices, ]
+```
+
+On s'assure que que les dimension sont correcte.
+
+```{r}
+dim(predicteurs)
+dim(matrice_vap)
+```
+
+On entraîne notre algorithme et on constate l'estimation de l'erreur de prédiction.
+
+```{r}
+BayesNaif <- naiveBayes(V4 ~ ., data = train_data)
+predictions <- predict(BayesNaif, test_data)
+error.e1071 <- mean(predictions == test_data$V4)
+cat("Test Error : ", error.e1071)
+```
+
+On obtient alors un erreur de 13% ce qui est assez grand, cela est peux être dû à la division dans notre jeu de donnée en 50/50, une répartition de 75% pour l'entraînement et 25% pour les tests aurait sûrement été plus judicieux.
+
+
+
+
+
+
+
